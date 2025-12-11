@@ -1,0 +1,9 @@
+ID_Transaksi,Tanggal,Nama_Pelanggan,Produk,Kategori,Jumlah,Harga_Satuan,Kota
+TRX-001,2024-01-01,Budi Santoso,Laptop Gaming,Elektronik,1,15000000,Jakarta
+TRX-001,2024-01-01,Budi Santoso,Laptop Gaming,Elektronik,1,15000000,Jakarta
+TRX-002,2024-01-02,Siti Aminah,Mouse Wireless,Aksesoris,,150000,Bandung
+TRX-003,2024-01-02,,Keyboard Mechanical,Aksesoris,2,350000,Surabaya
+TRX-004,2024-01-03,Joko Anwar,Monitor 24 inch,Elektronik,1,2500000,Medan
+TRX-005,2024-01-04,Rina Nose,Kabel HDMI,Aksesoris,5,50000,Jakarta
+TRX-006,2024-01-05,Doni Tata,Headset Bluetooth,Elektronik,1,750000,
+TRX-007,2024-01-05,Eka Gusti,Laptop Kerja,Elektronik,1,8000000,Bandung
