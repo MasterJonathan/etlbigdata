@@ -2,6 +2,13 @@ import streamlit as st
 import pandas as pd
 import io
 from sqlalchemy import create_engine, inspect
+import findspark
+findspark.init()
+import sys
+from pyspark import SparkContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col, when, split, concat_ws, lit, regexp_replace
+from pyspark.sql.types import StringType, IntegerType, FloatType, DateType
 
 # --- KONFIGURASI HALAMAN ---
 
@@ -146,16 +153,27 @@ elif menu == "2. Transform (Olah)":
     if not active_k:
         st.warning("⚠️ Belum ada data aktif dipilih di Sidebar. Silakan pilih data dulu.")
     else:
-        st.header(f"2. Transform: Mengedit '{active_k}'")
-        df = st.session_state.data_store[active_k]
+        st.header(f"2. Transform: Mengedit '{active_k}' (Spark Engine)")
         
+        # Initialize Spark
+        spark = SparkSession.builder.appName("StreamlitETL").getOrCreate()
+        
+        # Get Pandas DF
+        pdf = st.session_state.data_store[active_k]
+        
+        # Convert to Spark DF
+        try:
+            df = spark.createDataFrame(pdf)
+        except Exception as e:
+            st.warning(f"Gagal convert ke Spark secara langsung, mencoba convert semua ke String dulu: {e}")
+            df = spark.createDataFrame(pdf.astype(str))
+
         # --- PREVIEW DATA ---
         with st.expander("🔍 Lihat Data Saat Ini", expanded=True):
-            st.dataframe(df.head(5))
-            st.caption(f"Total Baris: {df.shape[0]} | Total Kolom: {df.shape[1]}")
+            st.dataframe(pdf.head(5))
+            st.caption(f"Total Baris: {pdf.shape[0]} | Total Kolom: {pdf.shape[1]}")
         
         # --- MENU TRANSFORMASI ---
-        # Membagi fitur ke dalam 4 Tab sesuai permintaan
         t1, t2, t3, t4 = st.tabs([
             "🧹 Cleaning", 
             "🔧 Manipulation", 
@@ -165,36 +183,35 @@ elif menu == "2. Transform (Olah)":
         
         # --- TAB 1: DATA CLEANING ---
         with t1:
-            st.subheader("Data Cleaning")
+            st.subheader("Data Cleaning (Spark)")
             col_c1, col_c2 = st.columns(2)
             
             with col_c1:
                 st.markdown("**1. Fill The Blank**")
                 fill_val = st.text_input("Isi data teks kosong dengan:", "Unknown")
                 if st.button("Isi Data Kosong"):
-                    # Logika: Angka diisi 0, Teks diisi input user
-                    num_cols = df.select_dtypes(include=['number']).columns
-                    obj_cols = df.select_dtypes(include=['object']).columns
+                    # Spark fillna
+                    df = df.na.fill(fill_val) # Fills strings
+                    df = df.na.fill(0)        # Fills numbers
                     
-                    df[num_cols] = df[num_cols].fillna(0)
-                    df[obj_cols] = df[obj_cols].fillna(fill_val)
-                    
-                    st.session_state.data_store[active_k] = df
+                    st.session_state.data_store[active_k] = df.toPandas()
                     st.success("Data kosong berhasil diisi.")
                     st.rerun()
             
             with col_c2:
                 st.markdown("**2. Remove Duplicates**")
                 if st.button("Hapus Duplikat"):
-                    before = len(df)
-                    df = df.drop_duplicates()
-                    st.session_state.data_store[active_k] = df
-                    st.success(f"Berhasil menghapus {before - len(df)} baris duplikat.")
+                    before = df.count()
+                    df = df.dropDuplicates()
+                    after = df.count()
+                    
+                    st.session_state.data_store[active_k] = df.toPandas()
+                    st.success(f"Berhasil menghapus {before - after} baris duplikat.")
                     st.rerun()
 
         # --- TAB 2: DATA MANIPULATION ---
         with t2:
-            st.subheader("Data Manipulation")
+            st.subheader("Data Manipulation (Spark)")
             
             # A. REPLACE
             with st.expander("A. Replace Value (Ganti Nilai)"):
@@ -204,15 +221,9 @@ elif menu == "2. Transform (Olah)":
                 new_val = c_rep3.text_input("Nilai Baru")
                 
                 if st.button("Ganti Nilai"):
-                    # Coba konversi ke angka jika memungkinkan agar tidak error tipe data
-                    if df[rep_col].dtype != 'object':
-                        try: old_val = float(old_val)
-                        except: pass
-                        try: new_val = float(new_val)
-                        except: pass
-                    
-                    df[rep_col] = df[rep_col].replace(old_val, new_val)
-                    st.session_state.data_store[active_k] = df
+                    # Spark replace
+                    df = df.withColumn(rep_col, when(col(rep_col) == old_val, new_val).otherwise(col(rep_col)))
+                    st.session_state.data_store[active_k] = df.toPandas()
                     st.success(f"Mengganti '{old_val}' menjadi '{new_val}'")
                     st.rerun()
 
@@ -223,24 +234,25 @@ elif menu == "2. Transform (Olah)":
                 fil_val = c_fil2.text_input("Nilai yang dicari (Contains):")
                 
                 if st.button("Terapkan Filter"):
-                    # Filter string contains (case insensitive)
-                    df = df[df[fil_col].astype(str).str.contains(fil_val, case=False, na=False)]
-                    st.session_state.data_store[active_k] = df
-                    st.success(f"Filter diterapkan. Sisa baris: {len(df)}")
+                    # Spark filter contains
+                    df = df.filter(col(fil_col).contains(fil_val))
+                    st.session_state.data_store[active_k] = df.toPandas()
+                    st.success(f"Filter diterapkan.")
                     st.rerun()
 
             # C. TRANSPOSE
             with st.expander("C. Transpose (Putar Baris <> Kolom)"):
-                st.warning("⚠️ Transpose akan mengubah struktur data secara total.")
+                st.warning("⚠️ Transpose tidak didukung secara native di Spark untuk UI ini (kembali ke Pandas).")
                 if st.button("Lakukan Transpose"):
-                    df = df.T.reset_index()
-                    st.session_state.data_store[active_k] = df
-                    st.success("Transpose berhasil.")
+                    pdf = df.toPandas()
+                    pdf = pdf.T.reset_index()
+                    st.session_state.data_store[active_k] = pdf
+                    st.success("Transpose berhasil (via Pandas).")
                     st.rerun()
 
         # --- TAB 3: COLUMN OPERATIONS ---
         with t3:
-            st.subheader("Column Operations")
+            st.subheader("Column Operations (Spark)")
             
             # A. SPLIT COLUMN
             with st.expander("A. Split Column (Pecah Kolom)"):
@@ -249,12 +261,13 @@ elif menu == "2. Transform (Olah)":
                 
                 if st.button("Pecah Kolom"):
                     try:
-                        new_cols = df[split_col].str.split(delimiter, expand=True)
-                        # Beri nama kolom otomatis
-                        new_cols.columns = [f"{split_col}_{i+1}" for i in range(new_cols.shape[1])]
-                        df = pd.concat([df, new_cols], axis=1)
-                        st.session_state.data_store[active_k] = df
-                        st.success(f"Kolom {split_col} berhasil dipecah.")
+                        # Simple split implementation: take first 2 parts
+                        split_col_expr = split(col(split_col), delimiter)
+                        df = df.withColumn(f"{split_col}_1", split_col_expr.getItem(0)) \
+                               .withColumn(f"{split_col}_2", split_col_expr.getItem(1))
+                        
+                        st.session_state.data_store[active_k] = df.toPandas()
+                        st.success(f"Kolom {split_col} berhasil dipecah (Max 2 bagian).")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Gagal split: {e}")
@@ -269,9 +282,8 @@ elif menu == "2. Transform (Olah)":
                     if not merge_cols:
                         st.error("Pilih minimal 2 kolom.")
                     else:
-                        # Gabung dengan convert ke string dulu
-                        df[new_col_name] = df[merge_cols].astype(str).agg(separator.join, axis=1)
-                        st.session_state.data_store[active_k] = df
+                        df = df.withColumn(new_col_name, concat_ws(separator, *[col(c) for c in merge_cols]))
+                        st.session_state.data_store[active_k] = df.toPandas()
                         st.success(f"Kolom baru '{new_col_name}' berhasil dibuat.")
                         st.rerun()
 
@@ -279,20 +291,20 @@ elif menu == "2. Transform (Olah)":
             with st.expander("C. Change Data Type (Ubah Tipe Data)"):
                 c_type1, c_type2 = st.columns(2)
                 type_col = c_type1.selectbox("Pilih Kolom:", df.columns, key="type_col")
-                target_type = c_type2.selectbox("Ubah ke Tipe:", ["String (Teks)", "Integer (Angka Bulat)", "Float (Desimal)", "DateTime (Tanggal)"])
+                target_type = c_type2.selectbox("Ubah ke Tipe:", ["String", "Integer", "Float", "Date"])
                 
                 if st.button("Ubah Tipe Data"):
                     try:
-                        if "String" in target_type:
-                            df[type_col] = df[type_col].astype(str)
-                        elif "Integer" in target_type:
-                            df[type_col] = pd.to_numeric(df[type_col], errors='coerce').fillna(0).astype(int)
-                        elif "Float" in target_type:
-                            df[type_col] = pd.to_numeric(df[type_col], errors='coerce')
-                        elif "DateTime" in target_type:
-                            df[type_col] = pd.to_datetime(df[type_col], errors='coerce')
+                        if target_type == "String":
+                            df = df.withColumn(type_col, col(type_col).cast(StringType()))
+                        elif target_type == "Integer":
+                            df = df.withColumn(type_col, col(type_col).cast(IntegerType()))
+                        elif target_type == "Float":
+                            df = df.withColumn(type_col, col(type_col).cast(FloatType()))
+                        elif target_type == "Date":
+                            df = df.withColumn(type_col, col(type_col).cast(DateType()))
                         
-                        st.session_state.data_store[active_k] = df
+                        st.session_state.data_store[active_k] = df.toPandas()
                         st.success(f"Kolom {type_col} berhasil diubah ke {target_type}.")
                         st.rerun()
                     except Exception as e:
@@ -300,21 +312,22 @@ elif menu == "2. Transform (Olah)":
 
         # --- TAB 4: RELATIONAL (JOIN) ---
         with t4:
-            st.subheader("Relational Operations (Join Tables)")
+            st.subheader("Relational Operations (Join Tables - Spark)")
             
-            # Cek apakah ada data lain untuk diajak join
             other_keys = [k for k in st.session_state.data_store.keys() if k != active_k]
             
             if not other_keys:
-                st.warning("⚠️ Anda butuh minimal 2 data yang sudah di-load untuk melakukan Join. Silakan Extract data lain dulu.")
+                st.warning("⚠️ Anda butuh minimal 2 data.")
             else:
-                st.info(f"Menggabungkan Tabel Aktif (**{active_k}**) dengan Tabel Lain.")
-                
                 c_j1, c_j2 = st.columns(2)
                 right_table_name = c_j1.selectbox("Pilih Tabel Pasangan (Right):", other_keys)
-                join_type = c_j2.selectbox("Jenis Join:", ["left", "inner", "right", "outer"])
+                join_type = c_j2.selectbox("Jenis Join:", ["left", "inner", "right", "outer"]) # Spark supports these
                 
-                right_df = st.session_state.data_store[right_table_name]
+                right_pdf = st.session_state.data_store[right_table_name]
+                try:
+                    right_df = spark.createDataFrame(right_pdf)
+                except:
+                    right_df = spark.createDataFrame(right_pdf.astype(str))
                 
                 c_j3, c_j4 = st.columns(2)
                 left_on = c_j3.selectbox(f"Kunci di {active_k} (Left):", df.columns)
@@ -322,16 +335,16 @@ elif menu == "2. Transform (Olah)":
                 
                 if st.button("Lakukan Join"):
                     try:
-                        merged_df = pd.merge(df, right_df, left_on=left_on, right_on=right_on, how=join_type)
+                        merged_df = df.join(right_df, df[left_on] == right_df[right_on], how=join_type)
                         
-                        # Simpan sebagai data baru agar data asli tidak rusak
+                        # Drop duplicate key column if names are same to avoid confusion in Pandas
+                        # Spark keeps both keys. Pandas merge usually merges them.
+                        # For simplicity, we just convert back.
+                        
                         new_join_name = f"Join_{active_k}_{right_table_name}"
-                        st.session_state.data_store[new_join_name] = merged_df
+                        st.session_state.data_store[new_join_name] = merged_df.toPandas()
                         
-                        st.success(f"Join Berhasil! Data baru tersimpan dengan nama: {new_join_name}")
-                        st.write("Silakan pilih data baru tersebut di Sidebar untuk melihat hasilnya.")
-                        
-                        # Opsional: Langsung pindah ke data baru
+                        st.success(f"Join Berhasil! Data baru: {new_join_name}")
                         st.session_state.active_key = new_join_name
                         st.rerun()
                     except Exception as e:
@@ -351,13 +364,29 @@ elif menu == "3. Load (Simpan)":
         
         st.dataframe(df.head())
         
-        target = st.selectbox("Target Simpan:", ["Hadoop (Parquet)", "MySQL Database"])
+        target = st.selectbox("Target Simpan:", ["Hadoop (Parquet)", "MySQL Database", "HDFS (Spark)"])
         
         if target == "Hadoop (Parquet)":
             buffer = io.BytesIO()
             df.to_parquet(buffer, index=False)
             st.download_button("Download Parquet", buffer.getvalue(), "hasil.parquet")
             
+        elif target == "HDFS (Spark)":
+            hdfs_url = st.text_input("HDFS URL", "hdfs://localhost:9000/user/royevan/uas")
+            if st.button("Save to HDFS"):
+                try:
+                    spark = SparkSession.builder.appName("StreamlitETL").getOrCreate()
+                    # Convert Pandas DF to Spark DF
+                    df_spark = df.astype(str)
+                    spark_df = spark.createDataFrame(df_spark)
+                    
+                    # Save as Text File
+                    spark_df.rdd.map(lambda row: ",".join([str(x) for x in row])).saveAsTextFile(hdfs_url)
+                    
+                    st.success(f"Berhasil simpan ke HDFS: {hdfs_url}")
+                except Exception as e:
+                    st.error(f"Gagal simpan ke HDFS: {e}")
+
         elif target == "MySQL Database":
             c1, c2 = st.columns(2)
             h = c1.text_input("Host", "localhost", key="lh")
