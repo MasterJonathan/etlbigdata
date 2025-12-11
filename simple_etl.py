@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect
 # --- KONFIGURASI HALAMAN ---
 
 st.set_page_config(page_title="Proyek Big Data - ETL", layout="wide", page_icon="🚀")
+st.title("abcd")
 
 # --- SESSION STATE (DATA STORE) ---
 # Kita gunakan Dictionary untuk menyimpan BANYAK dataframe sekaligus
