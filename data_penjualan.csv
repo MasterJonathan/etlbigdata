@@ -1,0 +1,8 @@
+Transaction_ID,Date,Customer_Name,Product_ID,Region,Quantity,Total_Price,Status
+TRX-101,2024-01-01,Andi Saputra,P-001,Jakarta,2,15000000,Paid
+TRX-101,2024-01-01,Andi Saputra,P-001,Jakarta,2,15000000,Paid
+TRX-102,2024-01-02,Budi Santoso,P-002,Bandung,,250000,Pending
+TRX-103,2024-01-03,Citra Kirana,P-003,,1,1500000,Paid
+TRX-104,2024-01-04,Dedi Corbuzier,P-001,Jkt,1,7500000,Paid
+TRX-105,2024-01-05,Erik Tohir,P-004,Surabaya,5,500000,Paid
+TRX-106,2024-01-06,Fani Rose,P-002,Bandung,1,250000,Cancelled
