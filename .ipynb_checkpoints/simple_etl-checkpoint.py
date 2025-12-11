@@ -6,6 +6,7 @@ from sqlalchemy import create_engine, inspect
 # --- KONFIGURASI HALAMAN ---
 
 st.set_page_config(page_title="Proyek Big Data - ETL", layout="wide", page_icon="🚀")
+st.title("abcd")
 
 # --- SESSION STATE (DATA STORE) ---
 # Kita gunakan Dictionary untuk menyimpan BANYAK dataframe sekaligus
@@ -143,68 +144,198 @@ elif menu == "2. Transform (Olah)":
     active_k = st.session_state.active_key
     
     if not active_k:
-        st.warning("⚠️ Belum ada data aktif dipilih di Sidebar.")
+        st.warning("⚠️ Belum ada data aktif dipilih di Sidebar. Silakan pilih data dulu.")
     else:
         st.header(f"2. Transform: Mengedit '{active_k}'")
         df = st.session_state.data_store[active_k]
         
-        # PREVIEW
-        st.dataframe(df.head(5))
-        st.caption(f"Rows: {df.shape[0]} | Cols: {df.shape[1]}")
+        # --- PREVIEW DATA ---
+        with st.expander("🔍 Lihat Data Saat Ini", expanded=True):
+            st.dataframe(df.head(5))
+            st.caption(f"Total Baris: {df.shape[0]} | Total Kolom: {df.shape[1]}")
         
-        # --- TAB TRANSFORM ---
-        t1, t2, t3 = st.tabs(["Cleaning & Filter", "Column Ops", "Join Tables"])
+        # --- MENU TRANSFORMASI ---
+        # Membagi fitur ke dalam 4 Tab sesuai permintaan
+        t1, t2, t3, t4 = st.tabs([
+            "🧹 Cleaning", 
+            "🔧 Manipulation", 
+            "📝 Column Ops", 
+            "🔗 Relational (Join)"
+        ])
         
-        with t1: # CLEANING
-            col1, col2 = st.columns(2)
-            if col1.button("Fill NA (Unknown/0)"):
-                num = df.select_dtypes(include=['number']).columns
-                obj = df.select_dtypes(include=['object']).columns
-                df[num] = df[num].fillna(0)
-                df[obj] = df[obj].fillna("Unknown")
-                st.session_state.data_store[active_k] = df
-                st.rerun()
-                
-            if col2.button("Remove Duplicates"):
-                df = df.drop_duplicates()
-                st.session_state.data_store[active_k] = df
-                st.rerun()
-                
-            # Filter
-            f_col = st.selectbox("Filter Kolom:", df.columns)
-            f_val = st.text_input("Nilai Filter:")
-            if st.button("Apply Filter"):
-                df = df[df[f_col].astype(str).str.contains(f_val, case=False, na=False)]
-                st.session_state.data_store[active_k] = df
-                st.rerun()
+        # --- TAB 1: DATA CLEANING ---
+        with t1:
+            st.subheader("Data Cleaning")
+            col_c1, col_c2 = st.columns(2)
+            
+            with col_c1:
+                st.markdown("**1. Fill The Blank**")
+                fill_val = st.text_input("Isi data teks kosong dengan:", "Unknown")
+                if st.button("Isi Data Kosong"):
+                    # Logika: Angka diisi 0, Teks diisi input user
+                    num_cols = df.select_dtypes(include=['number']).columns
+                    obj_cols = df.select_dtypes(include=['object']).columns
+                    
+                    df[num_cols] = df[num_cols].fillna(0)
+                    df[obj_cols] = df[obj_cols].fillna(fill_val)
+                    
+                    st.session_state.data_store[active_k] = df
+                    st.success("Data kosong berhasil diisi.")
+                    st.rerun()
+            
+            with col_c2:
+                st.markdown("**2. Remove Duplicates**")
+                if st.button("Hapus Duplikat"):
+                    before = len(df)
+                    df = df.drop_duplicates()
+                    st.session_state.data_store[active_k] = df
+                    st.success(f"Berhasil menghapus {before - len(df)} baris duplikat.")
+                    st.rerun()
 
-        with t2: # COLUMN OPS
-            split_col = st.selectbox("Split Kolom:", df.columns)
-            if st.button("Split by Spasi"):
-                new = df[split_col].str.split(" ", expand=True).add_prefix(f"{split_col}_")
-                df = pd.concat([df, new], axis=1)
-                st.session_state.data_store[active_k] = df
-                st.rerun()
+        # --- TAB 2: DATA MANIPULATION ---
+        with t2:
+            st.subheader("Data Manipulation")
+            
+            # A. REPLACE
+            with st.expander("A. Replace Value (Ganti Nilai)"):
+                c_rep1, c_rep2, c_rep3 = st.columns(3)
+                rep_col = c_rep1.selectbox("Pilih Kolom:", df.columns, key="rep_col")
+                old_val = c_rep2.text_input("Nilai Lama")
+                new_val = c_rep3.text_input("Nilai Baru")
+                
+                if st.button("Ganti Nilai"):
+                    # Coba konversi ke angka jika memungkinkan agar tidak error tipe data
+                    if df[rep_col].dtype != 'object':
+                        try: old_val = float(old_val)
+                        except: pass
+                        try: new_val = float(new_val)
+                        except: pass
+                    
+                    df[rep_col] = df[rep_col].replace(old_val, new_val)
+                    st.session_state.data_store[active_k] = df
+                    st.success(f"Mengganti '{old_val}' menjadi '{new_val}'")
+                    st.rerun()
 
-        with t3: # JOIN
-            st.write(f"Join **{active_k}** dengan tabel lain:")
+            # B. FILTER
+            with st.expander("B. Filter Data (Saring)"):
+                c_fil1, c_fil2 = st.columns(2)
+                fil_col = c_fil1.selectbox("Filter Berdasarkan Kolom:", df.columns, key="fil_col")
+                fil_val = c_fil2.text_input("Nilai yang dicari (Contains):")
+                
+                if st.button("Terapkan Filter"):
+                    # Filter string contains (case insensitive)
+                    df = df[df[fil_col].astype(str).str.contains(fil_val, case=False, na=False)]
+                    st.session_state.data_store[active_k] = df
+                    st.success(f"Filter diterapkan. Sisa baris: {len(df)}")
+                    st.rerun()
+
+            # C. TRANSPOSE
+            with st.expander("C. Transpose (Putar Baris <> Kolom)"):
+                st.warning("⚠️ Transpose akan mengubah struktur data secara total.")
+                if st.button("Lakukan Transpose"):
+                    df = df.T.reset_index()
+                    st.session_state.data_store[active_k] = df
+                    st.success("Transpose berhasil.")
+                    st.rerun()
+
+        # --- TAB 3: COLUMN OPERATIONS ---
+        with t3:
+            st.subheader("Column Operations")
+            
+            # A. SPLIT COLUMN
+            with st.expander("A. Split Column (Pecah Kolom)"):
+                split_col = st.selectbox("Pilih Kolom untuk Dipecah:", df.columns, key="split_col")
+                delimiter = st.text_input("Pemisah (Delimiter)", " ", help="Contoh: koma (,), spasi ( ), strip (-)")
+                
+                if st.button("Pecah Kolom"):
+                    try:
+                        new_cols = df[split_col].str.split(delimiter, expand=True)
+                        # Beri nama kolom otomatis
+                        new_cols.columns = [f"{split_col}_{i+1}" for i in range(new_cols.shape[1])]
+                        df = pd.concat([df, new_cols], axis=1)
+                        st.session_state.data_store[active_k] = df
+                        st.success(f"Kolom {split_col} berhasil dipecah.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Gagal split: {e}")
+
+            # B. MERGE COLUMN
+            with st.expander("B. Merge Column (Gabung Kolom)"):
+                merge_cols = st.multiselect("Pilih Beberapa Kolom:", df.columns)
+                separator = st.text_input("Pemisah Gabungan", " ", key="merge_sep")
+                new_col_name = st.text_input("Nama Kolom Baru", "Gabungan_Baru")
+                
+                if st.button("Gabung Kolom"):
+                    if not merge_cols:
+                        st.error("Pilih minimal 2 kolom.")
+                    else:
+                        # Gabung dengan convert ke string dulu
+                        df[new_col_name] = df[merge_cols].astype(str).agg(separator.join, axis=1)
+                        st.session_state.data_store[active_k] = df
+                        st.success(f"Kolom baru '{new_col_name}' berhasil dibuat.")
+                        st.rerun()
+
+            # C. DATA TYPE FORMATTING
+            with st.expander("C. Change Data Type (Ubah Tipe Data)"):
+                c_type1, c_type2 = st.columns(2)
+                type_col = c_type1.selectbox("Pilih Kolom:", df.columns, key="type_col")
+                target_type = c_type2.selectbox("Ubah ke Tipe:", ["String (Teks)", "Integer (Angka Bulat)", "Float (Desimal)", "DateTime (Tanggal)"])
+                
+                if st.button("Ubah Tipe Data"):
+                    try:
+                        if "String" in target_type:
+                            df[type_col] = df[type_col].astype(str)
+                        elif "Integer" in target_type:
+                            df[type_col] = pd.to_numeric(df[type_col], errors='coerce').fillna(0).astype(int)
+                        elif "Float" in target_type:
+                            df[type_col] = pd.to_numeric(df[type_col], errors='coerce')
+                        elif "DateTime" in target_type:
+                            df[type_col] = pd.to_datetime(df[type_col], errors='coerce')
+                        
+                        st.session_state.data_store[active_k] = df
+                        st.success(f"Kolom {type_col} berhasil diubah ke {target_type}.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Gagal mengubah tipe: {e}")
+
+        # --- TAB 4: RELATIONAL (JOIN) ---
+        with t4:
+            st.subheader("Relational Operations (Join Tables)")
+            
+            # Cek apakah ada data lain untuk diajak join
             other_keys = [k for k in st.session_state.data_store.keys() if k != active_k]
             
             if not other_keys:
-                st.warning("Butuh minimal 2 data terload untuk melakukan Join.")
+                st.warning("⚠️ Anda butuh minimal 2 data yang sudah di-load untuk melakukan Join. Silakan Extract data lain dulu.")
             else:
-                right_table_name = st.selectbox("Pilih Tabel Pasangan (Right):", other_keys)
-                left_on = st.selectbox("Kunci Tabel Kiri:", df.columns)
+                st.info(f"Menggabungkan Tabel Aktif (**{active_k}**) dengan Tabel Lain.")
+                
+                c_j1, c_j2 = st.columns(2)
+                right_table_name = c_j1.selectbox("Pilih Tabel Pasangan (Right):", other_keys)
+                join_type = c_j2.selectbox("Jenis Join:", ["left", "inner", "right", "outer"])
+                
                 right_df = st.session_state.data_store[right_table_name]
-                right_on = st.selectbox("Kunci Tabel Kanan:", right_df.columns)
+                
+                c_j3, c_j4 = st.columns(2)
+                left_on = c_j3.selectbox(f"Kunci di {active_k} (Left):", df.columns)
+                right_on = c_j4.selectbox(f"Kunci di {right_table_name} (Right):", right_df.columns)
                 
                 if st.button("Lakukan Join"):
-                    merged = pd.merge(df, right_df, left_on=left_on, right_on=right_on, how='left')
-                    # Simpan sebagai data baru
-                    new_name = f"Join_{active_k}_vs_{right_table_name}"
-                    st.session_state.data_store[new_name] = merged
-                    st.success(f"Join sukses! Disimpan sebagai '{new_name}'")
-                    st.rerun()
+                    try:
+                        merged_df = pd.merge(df, right_df, left_on=left_on, right_on=right_on, how=join_type)
+                        
+                        # Simpan sebagai data baru agar data asli tidak rusak
+                        new_join_name = f"Join_{active_k}_{right_table_name}"
+                        st.session_state.data_store[new_join_name] = merged_df
+                        
+                        st.success(f"Join Berhasil! Data baru tersimpan dengan nama: {new_join_name}")
+                        st.write("Silakan pilih data baru tersebut di Sidebar untuk melihat hasilnya.")
+                        
+                        # Opsional: Langsung pindah ke data baru
+                        st.session_state.active_key = new_join_name
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Gagal melakukan Join: {e}")
 
 # ==========================================
 # 3. LOAD (SIMPAN)
